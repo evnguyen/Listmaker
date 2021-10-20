@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
 import {
-    useQuery,
+    useLazyQuery,
     useMutation,
     gql,
 } from "@apollo/client";
+import { useHistory } from "react-router-dom";
 import './styles.css';
 import ImageList from '@mui/material/ImageList';
 import ImageListItem from '@mui/material/ImageListItem';
@@ -15,20 +16,27 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import CircularProgress from '@mui/material/CircularProgress';
 import ToggleButton from '@mui/material/ToggleButton';
 import ToggleButtonGroup from '@mui/material/ToggleButtonGroup';
+import Button from '@mui/material/Button';
+import { useAuth0 } from "@auth0/auth0-react";
 
 const Home = () => {
+    const { isAuthenticated, isLoading, logout, user } = useAuth0();
+    const history = useHistory();
     const [restaurants, setRestaurants] = useState();
+    const [userID, setUserID] = useState();
     const [list, setList] = useState([]);
     const [showAdded, setShowAdded] = useState(false);
-    const listData = useQuery(gql`
-        query getFeed {
-          list {
+    const [getList, listData] = useLazyQuery(gql`
+        query getList($user: ID!) {
+          list(user: $user) {
             id,
             data
           }
         }
       `
     );
+
+
 
     const handleAddCallback = (data) => {
         console.log(data);
@@ -37,9 +45,9 @@ const Home = () => {
     const handleAddCallbackErr = (error) => {
         console.error('Got error on add restaurant: ', error);
     };
-    const [addRestaurant, addRestaurantStatus] = useMutation(gql`
-        mutation addRestaurant($restaurant: RestaurantInput!) {
-          addRestaurant(restaurant: $restaurant) {
+    const [addRestaurant] = useMutation(gql`
+        mutation addRestaurant($restaurant: RestaurantInput!, $user: ID!) {
+          addRestaurant(restaurant: $restaurant, user: $user) {
             lastID,
             changes,
             data
@@ -48,13 +56,15 @@ const Home = () => {
       `, { onCompleted: handleAddCallback, onError: handleAddCallbackErr}
     );
 
+
+
     const handleDeleteCallback = (data) => {
         setList(list.filter(el => el.id !== data.deleteRestaurant));
     };
     const handleDeleteCallbackErr = (error) => {
         console.error('Got error on delete restaurant: ', error);
     };
-    const [deleteRestaurant, deleteRestaurantStatus] = useMutation(gql`
+    const [deleteRestaurant] = useMutation(gql`
         mutation deleteRestaurant($id: ID!) {
           deleteRestaurant(id: $id) 
         }
@@ -62,8 +72,26 @@ const Home = () => {
     );
 
 
+
+    const handleAddUserCallback = (data) => {
+        setUserID(data.addUser);
+        getList({
+            variables: { user: data.addUser },
+        });
+    };
+    const handleAddUserCallbackErr = (error) => {
+        console.error('Got error on adding user: ', error);
+    };
+    const [addUser] = useMutation(gql`
+        mutation addUser($user: User!) {
+          addUser(user: $user)
+        }
+      `, { onCompleted:handleAddUserCallback, onError: handleAddUserCallbackErr}
+    );
+
+
     useEffect( () => {
-        const getData = async () => {
+        const getRestaurantData = async () => {
             navigator.geolocation.getCurrentPosition(async (geo) => {
                 const res = await fetch(`/api/restaurants?latitude=${geo.coords.latitude}&longitude=${geo.coords.longitude}`);
                 const data = await res.json();
@@ -71,14 +99,24 @@ const Home = () => {
                 console.log('Got restuarants: ', data.businesses);
             }, () => {});
         };
-        getData();
-    }, []);
+        if (isAuthenticated) {
+            getRestaurantData();
+        }
+
+        // addUser will add user to db if not already. On complete, get list from user
+        if (user) {
+            addUser({
+                variables: { user: {name: user.name, email: user.email} },
+            });
+        }
+    }, [isAuthenticated]);
 
     useEffect(() => {
-        if (listData.loading === false) {
-            console.log('Got list:: ', listData.data.list);
+        // TODO: Use callback instead of useEffect
+        if (listData.loading === false && isAuthenticated) {
+            console.log('Got list:: ', listData?.data?.list);
             const savedList = [];
-            listData.data?.list?.map(item => {
+            listData.data?.list?.forEach(item => {
                 savedList.push({
                     id: item.id,
                     data: JSON.parse(item.data),
@@ -89,14 +127,14 @@ const Home = () => {
         if (listData.error) {
             console.error('Error on feed ', listData.error);
         }
-    }, [listData]);
+    }, [listData, isAuthenticated]);
 
 
     const handleAdd = (restaurant) => {
         console.log(`ADDING ${restaurant.name}`);
 
         addRestaurant({
-            variables: { restaurant: {data: JSON.stringify(restaurant)} },
+            variables: { restaurant: {data: JSON.stringify(restaurant)}, user: userID },
         });
     };
 
@@ -110,22 +148,44 @@ const Home = () => {
     const findRestaurant = (id) => {
         return list.find(el => el.data.id === id);
     };
+    
+    const handleShowAddedToggle = (e, value) => {
+        if (value != null) {
+            setShowAdded(value)
+        }
+    };
+
+    if (!isAuthenticated && !isLoading) {
+        console.log('Not logged in');
+        history.push('/login');
+    }
+    else if (isLoading) {
+        return <CircularProgress />
+    }
 
     return (
         <div className="App">
-            <ToggleButtonGroup
-                color="primary"
-                value={showAdded}
-                exclusive
-                onChange={(e, value) => {setShowAdded(value)}}
-            >
-                <ToggleButton value={false}>All</ToggleButton>
-                <ToggleButton value={true}>My list</ToggleButton>
-            </ToggleButtonGroup>
+            <div className="header">
+                <ToggleButtonGroup
+                    color="primary"
+                    value={showAdded}
+                    exclusive
+                    onChange={handleShowAddedToggle}
+                    className="toggleButtonGroup"
+                >
+                    <ToggleButton value={false}>All</ToggleButton>
+                    <ToggleButton value={true}>My list</ToggleButton>
+                </ToggleButtonGroup>
+                <Button
+                    variant="text"
+                    onClick={() => logout({ returnTo: window.location.origin })}
+                    size="small"
+                >
+                    Logout
+                </Button>
+            </div>
+            <h1>Top Restaurants in Your Area</h1>
             <ImageList sx={{ width: '100%', height: '100%' }}>
-                <ImageListItem key="Subheader" cols={2}>
-                    <ListSubheader component="div">Top Restaurants</ListSubheader>
-                </ImageListItem>
                 {restaurants && !showAdded &&
                     restaurants.map((item) => (
                         <ImageListItem key={item.id}>
@@ -136,6 +196,7 @@ const Home = () => {
                                     window.open(item.url, '_blank').focus();
                                 }}
                                 className="restaurantItem"
+                                alt={item.name}
                             />
                             <ImageListItemBar
                                 title={item.name}
@@ -165,6 +226,7 @@ const Home = () => {
                                         window.open(itemData.url, '_blank').focus();
                                     }}
                                     className="restaurantItem"
+                                    alt={item.name}
                                 />
                                 <ImageListItemBar
                                     title={itemData.name}

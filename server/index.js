@@ -30,14 +30,20 @@ const schema = buildSchema(`
       data: String!
     }
     
+    input User {
+      name: String!
+      email: String!
+    }
+    
     type Query {
-      list: [Restaurant!]!
+      list(user: ID!): [Restaurant!]!
       test: String
     }
         
     type Mutation {
-      addRestaurant(restaurant: RestaurantInput!): InsertionResult
+      addRestaurant(restaurant: RestaurantInput!, user: ID!): InsertionResult
       deleteRestaurant(id: ID!): ID!
+      addUser(user:User!): ID!
     }
     
     
@@ -45,18 +51,18 @@ const schema = buildSchema(`
 
 
 const resolvers = {
-    list: async () => {
+    list: async (args) => {
         const db = utils.connectDb();
         return new Promise((resolve, reject) => {
             db.serialize(() => {
-                db.all(`SELECT * FROM NewTable`, function(err, rows){
+                db.all(`SELECT * FROM ListData WHERE user=?`, [args.user],function(err, rows){
                     if (err) {
                         console.error(err.message);
                         db.close();
                         reject([]);
                     }
                     else {
-                        console.log(rows);
+                        // console.log(rows);
                         db.close();
                         resolve(rows);
                     }
@@ -69,14 +75,14 @@ const resolvers = {
         const db = utils.connectDb();
         return new Promise((resolve, reject) => {
             db.serialize(() => {
-                db.run(`INSERT INTO NewTable (data) VALUES (?);`, [args.restaurant.data], function(err) {
+                db.run(`INSERT INTO ListData (user, data) VALUES (?, ?);`, [args.user, args.restaurant.data], function(err) {
                     if (err) {
                         console.error(err.message);
                         db.close();
                         reject({});
                     }
                     else {
-                        console.log(this);
+                        // console.log(this);
                         resolve({...this, data: args.restaurant.data});
                         db.close();
                     }
@@ -88,16 +94,50 @@ const resolvers = {
         const db = utils.connectDb();
         return new Promise((resolve, reject) => {
             db.serialize(() => {
-                db.run(`DELETE FROM NewTable WHERE id=?;`, [args.id], function(err) {
+                db.run(`DELETE FROM ListData WHERE id=?;`, [args.id], function(err) {
                     if (err) {
                         console.error(err.message);
                         db.close();
                         reject(-1);
                     }
                     else {
-                        console.log(this);
+                        // console.log(this);
                         resolve(args.id);
                         db.close();
+                    }
+                });
+            });
+        });
+    },
+    addUser(args) {
+        const db = utils.connectDb();
+        return new Promise((resolve, reject) => {
+            db.serialize(() => {
+                db.get(`SELECT * FROM Users WHERE name=?;`, [args.user.name], function(err, row) {
+                    if (err) {
+                        console.error(err.message);
+                        db.close();
+                        reject(-1);
+                    }
+                    else if (!row) {
+                        console.log('No user found, creating one');
+                        db.run(`INSERT INTO Users (name, email) VALUES (?, ?);`, [args.user.name, args.user.email], function(err) {
+                            if (err) {
+                                console.error(err.message);
+                                db.close();
+                                reject(-1);
+                            }
+                            else {
+                                // console.log(this);
+                                resolve(this.lastID);
+                                db.close();
+                            }
+                        });
+                    }
+                    else {
+                        db.close();
+                        // console.log(row.id);
+                        resolve(row.id);
                     }
                 });
             });
@@ -113,7 +153,6 @@ app.use('/graphql', graphqlHTTP({
 }));
 
 app.get("/api/restaurants", async (req, res) => {
-    // TODO: Remove the auth token
     const response = await fetch(`https://api.yelp.com/v3/businesses/search?latitude=${req.query.latitude}&longitude=${req.query.longitude}`, {
         headers: {
             'Authorization': `Bearer ${process.env.AUTHTOKEN}`
@@ -121,51 +160,6 @@ app.get("/api/restaurants", async (req, res) => {
     });
     const data = await response.json();
     res.json(data);
-});
-
-// app.post("/api/add", async (req, res) => {
-//
-//     const db = connectDb();
-//     console.log(JSON.stringify(req.body));
-//
-//     db.serialize(() => {
-//         db.run(`INSERT INTO NewTable (data) VALUES (?);`, [JSON.stringify(req.body)], function(err) {
-//             if (err) {
-//                 console.error(err.message);
-//                 res.json(req.body);
-//             }
-//             else {
-//                 console.log(this);
-//                 res.json(this);
-//             }
-//             db.close();
-//         });
-//     });
-// });
-
-app.get("/api/graphql", async (req, res) => {
-
-    // const db = connectDb();
-    // db.serialize(() => {
-    //     db.all(`SELECT * FROM NewTable`, function(err, rows){
-    //         if (err) {
-    //             console.error(err.message);
-    //             res.status(400).json({"error": err.message});
-    //         }
-    //         else {
-    //             console.log(rows);
-    //             res.json(rows);
-    //         }
-    //         db.close();
-    //     });
-    // });
-
-
-
-    // utils.getList((list) => {
-    //     console.log(list);
-    // });
-
 });
 
 app.listen(PORT, () => {

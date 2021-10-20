@@ -1,3 +1,11 @@
 .restaurantItem:hover {
     cursor: pointer;
 }
+.header {
+    display: flex;
+    justify-content: flex-end;
+    margin: 1em 1em 1em 0;
+}
+.toggleButtonGroup {
+    margin-right: 1em;
+}
